@@ -60,6 +60,13 @@ explicit `--mem`. To see a partition's rules:
 scontrol show partition <name>
 ```
 
+For a picture of how it all fits together (head nodes, the InfiniBand
+fabric, WekaFS storage, every compute node by partition, preemption and a
+job's path), see
+[`docs/architecture/kamiak_architecture.pdf`](docs/architecture/kamiak_architecture.pdf).
+Rebuild it with `docs/architecture/compile.sh` (needs `pdflatex` with TikZ
+and pgfplots).
+
 ## Optional: your partition and nodes
 
 Set these in `~/.bashrc` **before** the line that sources `kamiak.bashrc`:
