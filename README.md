@@ -21,6 +21,45 @@ source ~/.bashrc
 Update later with `git -C ~/kamiak-bashrc pull`.
 To uninstall, delete that line from `~/.bashrc`.
 
+## Partitions
+
+The Kamiak login banner ends with the partitions you can submit to, e.g.
+
+```
+You have access to the following compute partitions:
+beckman,camas,cas,dtn,kamiak,popov,vcea
+```
+
+The list depends on your accounts, but the partitions come in a few kinds:
+
+| Kind | Examples | What it means |
+|---|---|---|
+| Backfill | `kamiak` | Open to everyone, covers nearly every node. Jobs here are **preemptable**: an owner's job can kill and requeue yours. Fine for short or checkpointed runs. |
+| Owner (lab / college) | `beckman`, `popov`, `cas`, `vcea` | Nodes bought by a lab or college. Members get priority and aren't preempted by backfill jobs. |
+| Shared priority | `camas` | Open, higher-priority, not preemptable. Holds the H100 GPU nodes (`sn16`–`sn18`). |
+| Data transfer | `dtn` | For large `rsync` / `scp` copies, not compute. |
+
+`mycluster` shows the details for your own accounts: which account opens
+each partition, its limits and longest job, how busy it is, and a PREEMPT
+column (`safe` / `low` / `EVICTABLE`). `nodesfree` shows how busy each one
+is right now, and `gpuson` lists the GPU nodes with their partitions.
+
+You can list several partitions and SLURM starts the job on whichever
+frees up first:
+
+```bash
+#SBATCH -p popov,kamiak
+```
+
+Partitions have their own rules. For example, `popov` rejects
+`--exclusive` (`sbatch: error: Exclusive flag disallowed`). To get a whole
+node there, ask for all its cores with `--ntasks-per-node` and give an
+explicit `--mem`. To see a partition's rules:
+
+```bash
+scontrol show partition <name>
+```
+
 ## Optional: your partition and nodes
 
 Set these in `~/.bashrc` **before** the line that sources `kamiak.bashrc`:
