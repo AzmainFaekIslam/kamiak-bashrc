@@ -131,6 +131,21 @@ to submit if it can't list the partition's nodes.
 Scratch workspaces are deleted after 14 days. Copy anything you want to keep
 back to `$HOME` or `/weka/data`.
 
+**Documentation**
+
+| Command | What it does |
+|---|---|
+| `kman` | Lists the topics from the Kamiak docs at hpc.wsu.edu |
+| `kman <topic>` | Shows that page in the terminal like a man page, e.g. `kman jobs`, `kman queues`, `kman aup` |
+| `kman -s <words>` | Searches the site; if only one page matches, it opens it |
+| `kman -u <topic>` | Prints the page's web address |
+| `kman -r <topic>` | Fetches the page again instead of using the cache |
+
+Pages come from the site's WordPress API and are cached for a day in
+`~/.cache/kman`, so `kman` still works from that cache when the site is
+down. It needs `curl` and `python3`, and uses the system `/usr/bin/python3`
+so loaded modules and conda environments don't affect it.
+
 ## Colours
 
 In the bars, **you are bold white**. Everyone else gets red, green, blue,
@@ -157,10 +172,11 @@ Piping output (`myjobs | grep ...`) gives plain text.
 
 ## Notes
 
-- Everything reads SLURM (`sinfo`, `squeue`, `scontrol`, `sacct`, `sacctmgr`,
-  `sreport`, `sshare`), so it only works on Kamiak.
+- Everything except `kman` reads SLURM (`sinfo`, `squeue`, `scontrol`,
+  `sacct`, `sacctmgr`, `sreport`, `sshare`), so it only works on Kamiak.
+  `kman` only needs internet access.
 - These commands only read cluster state. Nothing here changes anything except
-  `sbmine`, `ijob` and `mkws`.
+  `sbmine`, `ijob` and `mkws`, plus `kman`'s cache in `~/.cache/kman`.
 - If you add something that prints at startup, wrap it in
   `[[ $- == *i* ]] && ...`.
 

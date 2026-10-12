@@ -37,6 +37,9 @@
 #     mydisk [-u]            Disk space, quota and workspaces (-u = also size of $HOME)
 #     ktree [dir] [depth] [s]  Directory tree with file counts (and sizes with s)
 #
+#   Documentation
+#     kman [topic]           Kamiak docs from hpc.wsu.edu as a man page (kman -s <words> searches)
+#
 # Nothing in this file prints anything when the shell starts. Keep it that way:
 # output at startup breaks scp, rsync and some batch jobs. If you add something
 # that prints, wrap it like this:   [[ $- == *i* ]] && echo "hello"
@@ -1190,3 +1193,406 @@ ktree() {
   _ktree_rec "${d%/}" "" 0 "$n" "$sz"
 }
 
+
+
+# =============================================================================
+# 10. Kamiak documentation in the terminal
+# =============================================================================
+# kman  --  read the Kamiak docs (hpc.wsu.edu) like a man page
+#   kman                  list the topics
+#   kman <topic>          show one page in less, e.g.  kman jobs,  kman queues
+#   kman -s <words>       search the site, e.g.  kman -s conda
+#   kman -u <topic>       print the page's web address instead
+#   kman -r <topic>       fetch it again now, skipping the cache
+#   A topic can be one of the short names from `kman`, a page name from the
+#   site (the last part of its URL, e.g. kman camas-gpu-cluster), or any word,
+#   which is then searched for. Pages come from the site's WordPress API and
+#   are cached for a day in ~/.cache/kman; if the site can't be reached, the
+#   cached copy is shown with a warning.
+#   Needs curl and python3 (the system /usr/bin/python3 is used when present,
+#   so loaded modules and conda environments don't matter).
+#   hpc.wsu.edu refuses curl's default User-Agent, so kman sends its own.
+_KMAN_SITE=https://hpc.wsu.edu
+_KMAN_CHEAT=https://wpcdn.web.wsu.edu/wp-research/uploads/sites/2940/2024/02/kamiak_cheat_sheet_vs1.pdf
+
+# _kman_slug <topic>  --  short topic name -> page name on the site
+_kman_slug() {
+    case "$1" in
+        quick|start)    echo quick-start-guide ;;
+        access|account) echo requesting-access ;;
+        ssh|login)      echo terminal-ssh ;;
+        unix|linux)     echo unixlinux-commands ;;
+        env|shell)      echo the-unixlinux-environment ;;
+        editors|vim)    echo text-editing-software ;;
+        jobs|slurm|sbatch) echo job-submission ;;
+        queues|partitions|nodes) echo queue-list ;;
+        camas|gpu|gpus) echo camas-gpu-cluster ;;
+        modules|module) echo environment-modules ;;
+        storage|disk|quota) echo storage ;;
+        transfer|scp|rsync|globus) echo file-transfers ;;
+        conda)          echo python ;;
+        r|R)            echo running_r ;;
+        apptainer|containers) echo singularity ;;
+        db|databases)   echo running-databases ;;
+        help)           echo help-desk ;;
+        contact)        echo contact-us ;;
+        staff)          echo staff-contact-info ;;
+        maint|maintenance|outage) echo maintenance-windows ;;
+        updates|news)   echo kamiak-system-updates ;;
+        requests|software) echo service-requests ;;
+        cite|citing|acknowledge) echo citing-kamiak ;;
+        grant)          echo include-kamiak-in-a-grant ;;
+        investor|buy)   echo becoming-an-investor ;;
+        about)          echo what-is-kamiak ;;
+        *)              echo "$1" ;;
+    esac
+}
+
+_kman_topics() {
+    cat <<'TOPICS'
+kman <topic>  shows a page from hpc.wsu.edu.  kman -s <words> searches.
+
+  Getting started   quick      Quick start guide
+                    access     Requesting an account
+                    ssh        Logging in (terminal, SSH)
+                    unix       Unix/Linux commands
+                    env        The Unix/Linux environment
+                    editors    Text editors
+  Running jobs      jobs       Job submission with Slurm (sbatch, srun, idev)
+                    queues     Partitions and what hardware each one has
+                    camas      The camas GPU partition (H100)
+                    modules    Environment modules (module load ...)
+  Data              storage    Home, data and scratch storage, quotas
+                    transfer   Copying files to and from Kamiak
+  Software          python     Python and conda
+                    r          Running R
+                    singularity  Containers
+                    db         Running databases
+  Rules and help    aup        Acceptable use policy
+                    help       Help desk
+                    contact    Contact CIRC
+                    requests   Service requests (software installs, ...)
+                    maint      Maintenance windows
+                    updates    Kamiak system updates
+                    cite       Citing Kamiak in papers
+                    grant      Including Kamiak in a grant
+                    investor   Buying nodes (becoming an investor)
+                    training   Training
+                    cheat      Kamiak cheat sheet (PDF; prints the link)
+
+Pages that aren't listed work by their page name too: kman camas-gpu-cluster
+TOPICS
+}
+
+# _kman_api <outfile> <curl -G args>...  --  query the site's pages API
+_kman_api() {
+    local out=$1; shift
+    curl -fsSL -G --max-time 20 -A "Mozilla/5.0 (kman; kamiak-bashrc)" \
+        "$_KMAN_SITE/wp-json/wp/v2/pages" "$@" -o "$out.tmp" 2>/dev/null \
+        && mv -f "$out.tmp" "$out"
+}
+
+# _kman_py <mode> <args>...  --  the JSON / HTML part, done in Python
+#   page FILE WIDTH COLOUR   print the page as text (exit 3 = no such page)
+#   list FILE                one line per page: name, title   (exit 3 = none)
+#   field FILE KEY           print one field of the first page (slug, link, modified)
+_kman_py() {
+    local py=/usr/bin/python3
+    [ -x "$py" ] || py=$(command -v python3) || { echo "kman: needs python3" >&2; return 1; }
+    "$py" -I - "$@" <<'PY'
+import sys, json, re, textwrap
+from html.parser import HTMLParser
+from html import unescape
+
+mode, fn = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(fn))
+except ValueError:
+    sys.exit(3)
+if not isinstance(data, list) or not data:
+    sys.exit(3)
+if mode == "list":
+    for d in data:
+        print("  %-28s %s" % (d["slug"], unescape(d["title"]["rendered"])))
+    sys.exit(0)
+data = data[0]
+if mode == "field":
+    print(data.get(sys.argv[3], ""))
+    sys.exit(0)
+W = max(40, min(int(sys.argv[3]), 100))
+COL = sys.argv[4] == "1"
+B = (lambda s: "\033[1m" + s + "\033[0m") if COL else (lambda s: s)
+H = (lambda s: "\033[1;36m" + s + "\033[0m") if COL else (lambda s: s)
+DIM = (lambda s: "\033[2m" + s + "\033[0m") if COL else (lambda s: s)
+IND = 3                                   # body text indent, man-page style
+
+out = []
+links = []
+
+
+def ws(s):
+    return re.sub(r"\s+", " ", s.replace("\xa0", " "))
+
+
+class R(HTMLParser):
+    def __init__(self):
+        HTMLParser.__init__(self, convert_charrefs=True)
+        self.buf = ""          # inline text of the current paragraph
+        self.lists = []        # stack of [kind, counter]
+        self.bullet = ""       # bullet for the first line of the current paragraph
+        self.skip = 0          # inside script/style
+        self.pre = None        # text of a <pre> block
+        self.head = None       # heading level while inside <hN>
+        self.table = None      # list of rows; row = list of cells
+        self.cell = None
+        self.thead = False
+        self.href = None
+        self.atext = ""
+
+    # -- paragraphs -------------------------------------------------------
+    def flush(self):
+        t = ws(self.buf).strip()
+        self.buf = ""
+        if not t or re.search(r"\w\(\{.*\}\);?$", t):
+            return
+        if self.head:
+            if out and out[-1] != "":
+                out.append("")
+            out.append(H(t.upper()) if self.head <= 2 else H(t))
+            return
+        ind = IND + 3 * len(self.lists)
+        first = " " * (ind - len(self.bullet)) + self.bullet if self.bullet else " " * ind
+        self.bullet = ""
+        out.extend(textwrap.wrap(t, W - 1, initial_indent=first, subsequent_indent=" " * ind,
+                                 break_on_hyphens=False, break_long_words=False))
+        if not self.lists:
+            out.append("")
+
+    def text(self, s):
+        if self.cell is not None:
+            self.cell += s
+        else:
+            self.buf += s
+
+    # -- tags -------------------------------------------------------------
+    def handle_starttag(self, tag, a):
+        a = dict(a)
+        if tag in ("script", "style", "noscript"):
+            self.skip += 1
+        elif self.skip:
+            return
+        elif self.pre is not None:
+            if tag == "br":
+                self.pre += "\n"
+        elif tag == "pre":
+            self.flush()
+            self.pre = ""
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            self.flush()
+            self.head = int(tag[1])
+        elif tag in ("ul", "ol"):
+            self.flush()
+            self.lists.append([tag, 0])
+        elif tag == "li":
+            self.flush()
+            if self.lists:
+                l = self.lists[-1]
+                l[1] += 1
+                self.bullet = ("%d. " % l[1]) if l[0] == "ol" else "• "
+        elif tag == "table":
+            self.flush()
+            self.table = []
+        elif tag == "thead":
+            self.thead = True
+        elif tag == "tr" and self.table is not None:
+            self.table.append((self.thead, []))
+        elif tag in ("td", "th") and self.table is not None:
+            if not self.table:
+                self.table.append((self.thead, []))
+            self.cell = ""
+        elif tag == "br":
+            if self.cell is not None:
+                self.cell += " "
+            else:
+                self.flush()
+        elif tag in ("p", "div", "blockquote", "dd", "dt", "figure"):
+            self.flush()
+        elif tag == "hr":
+            self.flush()
+            out.append(" " * IND + DIM("─" * (W - IND - 1)))
+        elif tag == "a":
+            self.href = a.get("href") or ""
+            self.atext = ""
+        elif tag == "img" and a.get("alt"):
+            self.text(" [image: %s] " % a["alt"])
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "noscript"):
+            self.skip = max(0, self.skip - 1)
+        elif self.skip:
+            return
+        elif tag == "pre" and self.pre is not None:
+            code = self.pre.strip("\n").expandtabs(4)
+            self.pre = None
+            for line in code.split("\n"):
+                out.append(" " * (IND + 4) + line.rstrip())
+            out.append("")
+        elif self.pre is not None:
+            return
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            self.flush()
+            self.head = None
+        elif tag in ("ul", "ol"):
+            self.flush()
+            if self.lists:
+                self.lists.pop()
+            if not self.lists:
+                out.append("")
+        elif tag == "li":
+            self.flush()
+        elif tag == "thead":
+            self.thead = False
+        elif tag in ("td", "th") and self.cell is not None:
+            self.table[-1][1].append(ws(self.cell).strip())
+            self.cell = None
+        elif tag == "table" and self.table is not None:
+            self.render_table()
+            self.table = None
+        elif tag in ("p", "div", "blockquote", "dd", "dt", "figure"):
+            self.flush()
+        elif tag == "a" and self.href is not None:
+            h, t = self.href, ws(self.atext).strip()
+            self.href = None
+            if h.startswith(("http", "mailto:")) and t and t.rstrip("/") != h.rstrip("/").replace("mailto:", ""):
+                if h not in links:
+                    links.append(h)
+                self.text("[%d]" % (links.index(h) + 1))
+
+    def handle_data(self, d):
+        if self.skip:
+            return
+        if self.pre is not None:
+            self.pre += d
+            return
+        if self.href is not None:
+            self.atext += d
+        self.text(d)
+
+    # -- tables -----------------------------------------------------------
+    def render_table(self):
+        rows = [(h, r) for h, r in self.table if any(r)]
+        if not rows:
+            return
+        n = max(len(r) for _, r in rows)
+        rows = [(h, r + [""] * (n - len(r))) for h, r in rows]
+        wid = [max(len(r[i]) for _, r in rows) for i in range(n)]
+        room = W - 1 - IND - 2 * (n - 1)
+        while sum(wid) > room and max(wid) > 8:     # shrink the widest column
+            wid[wid.index(max(wid))] -= 1
+        for k, (head, r) in enumerate(rows):
+            cells = [textwrap.wrap(c, wid[i], break_long_words=True) or [""] for i, c in enumerate(r)]
+            for j in range(max(len(c) for c in cells)):
+                line = "  ".join((c[j] if j < len(c) else "").ljust(wid[i]) for i, c in enumerate(cells))
+                line = " " * IND + line.rstrip()
+                out.append(B(line) if head else line)
+            if head and (k + 1 < len(rows) and not rows[k + 1][0]):
+                out.append(" " * IND + DIM("─" * min(sum(wid) + 2 * (n - 1), W - IND - 1)))
+        out.append("")
+
+
+title = unescape(data["title"]["rendered"])
+r = R()
+r.feed(data["content"]["rendered"])
+r.flush()
+
+# drop runs of blank lines
+lines = []
+for l in out:
+    if l == "" and (not lines or lines[-1] == ""):
+        continue
+    lines.append(l)
+
+print(B(title.upper()) + "    " + DIM(data.get("link", "")))
+print()
+print("\n".join(lines).rstrip())
+if links:
+    print()
+    print(H("LINKS"))
+    for i, h in enumerate(links, 1):
+        print(" " * IND + "[%d] %s" % (i, h))
+print()
+print(DIM("hpc.wsu.edu, last changed %s" % data.get("modified", "?")[:10]))
+PY
+}
+
+kman() {
+    local refresh="" urlonly="" search=""
+    while [[ ${1:-} == -* ]]; do
+        case "$1" in
+            -r) refresh=1 ;;
+            -u) urlonly=1 ;;
+            -s) search=1 ;;
+            -h|--help) _kman_topics; return 0 ;;
+            *) echo "Usage: kman [-r] [-u] <topic>  |  kman -s <words>  |  kman" >&2; return 1 ;;
+        esac
+        shift
+    done
+    if [ $# -eq 0 ]; then
+        [ -n "$search" ] && { echo "Usage: kman -s <words>" >&2; return 1; }
+        _kman_topics
+        return 0
+    fi
+
+    local cache="${XDG_CACHE_HOME:-$HOME/.cache}/kman" slug f
+    mkdir -p "$cache" || return 1
+
+    # kman -s, or a topic that isn't a valid page name: search the site
+    slug=$(_kman_slug "$1")
+    if [ "$slug" = cheat ]; then echo "Kamiak cheat sheet (PDF): $_KMAN_CHEAT"; return 0; fi
+    if [ -n "$search" ] || [ $# -gt 1 ] || [[ ! $slug =~ ^[A-Za-z0-9_-]+$ ]]; then
+        _kman_search "$cache" "$@"
+        return
+    fi
+
+    f="$cache/$slug.json"
+    if [ -n "$refresh" ] || [ -z "$(find "$f" -mmin -1440 2>/dev/null)" ]; then
+        if ! _kman_api "$f" --data-urlencode "slug=$slug" --data "_fields=slug,title,link,modified,content"; then
+            if [ -s "$f" ]; then
+                echo "kman: can't reach $_KMAN_SITE; showing the copy saved $(date -r "$f" '+%F %H:%M')" >&2
+            else
+                echo "kman: can't reach $_KMAN_SITE (no internet on this node?). The docs are at $_KMAN_SITE" >&2
+                return 1
+            fi
+        fi
+    fi
+
+    if [ -n "$urlonly" ]; then
+        _kman_py field "$f" link && return 0
+    elif [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+        _kman_py page "$f" "$(tput cols 2>/dev/null || echo 80)" 1 > "$cache/.page" && { less -R "$cache/.page"; return 0; }
+    else
+        _kman_py page "$f" "${COLUMNS:-80}" 0 && return 0
+    fi
+    # no page by that name: search for the word instead
+    [ $? -eq 3 ] || return 1
+    rm -f "$f"
+    _kman_search "$cache" "$1"
+}
+
+# _kman_search <cachedir> <words>...  --  list matching pages; show it if only one
+_kman_search() {
+    local cache=$1 f="$1/.search.json" one; shift
+    _kman_api "$f" --data-urlencode "search=$*" --data "_fields=slug,title" \
+        || { echo "kman: can't reach $_KMAN_SITE" >&2; return 1; }
+    if [ "$(_kman_py list "$f" | wc -l)" -eq 1 ]; then
+        one=$(_kman_py field "$f" slug)
+        kman "$one"
+        return
+    fi
+    if ! _kman_py list "$f" > "$f.txt"; then
+        echo "kman: nothing on $_KMAN_SITE matches '$*'" >&2
+        return 1
+    fi
+    echo "Pages matching '$*'  (show one with: kman <page>)"
+    cat "$f.txt"
+}
